@@ -1,70 +1,98 @@
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { MobxEvent, useEvent } from '@app/utils'
+import { makeAutoObservable, reaction } from 'mobx'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { TextInput, TextInputProps } from 'react-native'
 
-type HookParams = {
+type ControlParams = {
   initialValue?: string
-  forcedInvalid?: boolean
   testValid?: (value: string) => boolean
-  onSubmit?: () => void
 }
 
-export const useTextInput = ({ initialValue, forcedInvalid, testValid, onSubmit }: HookParams) => {
-  const textInputRef = useRef<TextInput | null>(null)
-  const [value, setValue] = useState(initialValue ?? '')
-  const textRef = useRef<string>(value)
+export class TextInputControl {
+  value: string
+  private testValid: ControlParams['testValid']
+  private shadowedHighlightedInvalid: boolean
+  forcedInvalid?: boolean = undefined
 
-  const isValid = useMemo(() => (value ? testValid?.(value) ?? true : true), [value, testValid])
-  const [highlightedInvalid, setHighlightedInvalid] = useState(!isValid)
+  focusEvent = new MobxEvent()
+  submitEditingEvent = new MobxEvent()
 
-  const ref = useCallback((obj: TextInput | null) => {
-    if (!textInputRef.current) {
-      textInputRef.current = obj
-      textInputRef.current?.setNativeProps({ text: textRef.current })
-    }
-  }, [])
+  constructor(params: ControlParams) {
+    this.value = params.initialValue ?? ''
+    this.testValid = params.testValid
+    this.shadowedHighlightedInvalid = !this.shadowedIsValid
+    makeAutoObservable(this)
+  }
 
-  const onChangeText = useCallback((text: string) => {
-    textRef.current = text
-    textInputRef.current?.setNativeProps({ text: textRef.current })
-    setValue(text)
-  }, [])
+  private get shadowedIsValid() {
+    return this.value && this.testValid ? this.testValid(this.value) : true
+  }
 
-  const onSubmitEditing = useCallback(() => {
-    onSubmit?.()
-  }, [onSubmit])
+  get isValid() {
+    return !this.forcedInvalid && this.shadowedIsValid
+  }
 
-  const onBlur = useCallback(() => {
-    const text = textRef.current
-    setHighlightedInvalid(!(text && testValid ? testValid(text) : true))
-  }, [testValid])
+  get highlightedInvalid() {
+    return Boolean(this.forcedInvalid) || this.shadowedHighlightedInvalid
+  }
 
-  const focus = useCallback(() => {
-    textInputRef.current?.focus()
-  }, [])
+  onChangeText(value: string) {
+    this.value = value
+  }
 
-  return {
-    ref,
-    value,
-    isValid: !forcedInvalid && isValid,
-    highlightedInvalid: Boolean(forcedInvalid) || highlightedInvalid,
-    onChangeText,
-    onSubmitEditing,
-    onBlur,
-    focus,
+  onBlur() {
+    this.shadowedHighlightedInvalid = !this.shadowedIsValid
+  }
+
+  onSubmitEditing() {
+    this.submitEditingEvent.fire()
+  }
+
+  focus() {
+    this.focusEvent.fire()
   }
 }
 
 type Props = Omit<TextInputProps, 'value' | 'ref' | 'onChangeText' | 'onSubmitEditing' | 'onBlur'> & {
-  hook: ReturnType<typeof useTextInput>
+  control: TextInputControl
 }
 
-export const ManagedTextInput = ({ hook, style, ...otherProps }: Props) => {
+export const ManagedTextInput = ({ control, style, ...otherProps }: Props) => {
+  const textInputRef = useRef<TextInput | null>(null)
+  const ref = useCallback(
+    (obj: TextInput | null) => {
+      if (!textInputRef.current) {
+        textInputRef.current = obj
+        textInputRef.current?.setNativeProps({ text: control.value })
+      }
+    },
+    [control],
+  )
+
+  useEvent(control.focusEvent, () => textInputRef.current?.focus())
+
+  const [highlightedInvalid, setHighlightedInvalid] = useState(control.highlightedInvalid)
+
+  useEffect(() => {
+    const valueDisposer = reaction(
+      () => control.value,
+      value => textInputRef.current?.setNativeProps({ text: value }),
+    )
+
+    const highlightedInvalidDisposer = reaction(() => control.highlightedInvalid, setHighlightedInvalid)
+
+    return () => {
+      valueDisposer()
+      highlightedInvalidDisposer()
+    }
+  }, [control])
+
   return (
     <TextInput
-      ref={hook.ref}
-      onChangeText={hook.onChangeText}
-      onSubmitEditing={hook.onSubmitEditing}
-      onBlur={hook.onBlur}
+      ref={ref}
+      onChangeText={text => control.onChangeText(text)}
+      onSubmitEditing={() => control.onSubmitEditing()}
+      onBlur={() => control.onBlur()}
       {...otherProps}
       style={[
         {
@@ -72,7 +100,7 @@ export const ManagedTextInput = ({ hook, style, ...otherProps }: Props) => {
           padding: 8,
           borderWidth: 1,
           borderRadius: 5,
-          borderColor: hook.highlightedInvalid ? 'red' : 'black',
+          borderColor: highlightedInvalid ? 'red' : 'black',
         },
         style,
       ]}

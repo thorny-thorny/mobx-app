@@ -1,71 +1,123 @@
 import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { Alert, Keyboard, ScrollView, Text, View } from 'react-native'
-import { AppButton, ManagedTextInput, useTextInput } from '@app/components'
-import { isValidEmail, useSetBusy } from '@app/utils'
-import { UserContext } from '@app/context'
+import { AppButton, ManagedTextInput, TextInputControl } from '@app/components'
+import {
+  isValidEmail,
+  makeMobxEnabled,
+  MobxEnabled,
+  MobxEvent,
+  useEnabled,
+  useEvent,
+  useObservable,
+  useSetBusy,
+  watchEvent,
+} from '@app/utils'
+import { UserContext, UserContextValue } from '@app/context'
+import { autorun, makeAutoObservable, reaction, runInAction } from 'mobx'
 
-const useLoginHook = () => {
-  const focusPasswordRef = useRef<(() => void) | null>(null)
-  const focusPassword = useCallback(() => focusPasswordRef.current?.(), [])
-  const submitRef = useRef<(() => void) | null>(null)
-  const submit = useCallback(() => submitRef.current?.(), [])
+class LoginControl {
+  emailControl: TextInputControl
+  passwordControl: TextInputControl
+  dismissKeyboard = new MobxEvent()
+  showAlert = new MobxEvent<string>()
+  isBusy = false
+  wrongCredentials = false
+  enabled: MobxEnabled
 
-  const [wrongCredentials, setWrongCredentials] = useState(false)
-  const email = useTextInput({ testValid: isValidEmail, forcedInvalid: wrongCredentials, onSubmit: focusPassword })
-  const password = useTextInput({ forcedInvalid: wrongCredentials, onSubmit: submit })
-  const setBusy = useSetBusy('login')
-  const { logIn } = useContext(UserContext)
+  constructor(private readonly userContext: UserContextValue) {
+    this.emailControl = new TextInputControl({ testValid: isValidEmail })
+    this.passwordControl = new TextInputControl({})
 
-  if (!focusPasswordRef.current) {
-    focusPasswordRef.current = password.focus
+    this.enabled = makeMobxEnabled(() => {
+      const emailSubmitDispose = watchEvent(this.emailControl.submitEditingEvent, () => this.passwordControl.focus())
+      const passwordSubmitDispose = watchEvent(this.passwordControl.submitEditingEvent, () => this.submit())
+      const resetForcedIvalidDispose = reaction(
+        () => [this.emailControl.value, this.passwordControl.value],
+        () => {
+          this.emailControl.forcedInvalid = false
+          this.passwordControl.forcedInvalid = false
+          this.wrongCredentials = false
+        },
+      )
+
+      return () => {
+        emailSubmitDispose()
+        passwordSubmitDispose()
+        resetForcedIvalidDispose()
+      }
+    })
+
+    makeAutoObservable(this)
   }
 
-  const emailIsEmptyOrInvalid = !email.value || !email.isValid
-  const passwordIsEmptyOrInvalid = !password.value || !password.isValid
-  const cantSubmit = emailIsEmptyOrInvalid || passwordIsEmptyOrInvalid
+  get cantSubmit() {
+    const emailIsEmptyOrInvalid = !this.emailControl.value || !this.emailControl.isValid
+    const passwordIsEmptyOrInvalid = !this.passwordControl.value || !this.passwordControl.isValid
+    return emailIsEmptyOrInvalid || passwordIsEmptyOrInvalid
+  }
 
-  useEffect(() => setWrongCredentials(false), [email.value, password.value])
-
-  submitRef.current = async () => {
-    if (cantSubmit) {
+  async submit() {
+    if (this.cantSubmit) {
       return
     }
 
-    Keyboard.dismiss()
+    this.dismissKeyboard.fire()
 
-    setBusy(true)
+    this.isBusy = true
 
     try {
-      const credentialsAreCorrect = await logIn(email.value, password.value)
+      const credentialsAreCorrect = await this.userContext.logIn(this.emailControl.value, this.passwordControl.value)
       if (!credentialsAreCorrect) {
-        setWrongCredentials(true)
+        runInAction(() => {
+          this.emailControl.forcedInvalid = true
+          this.passwordControl.forcedInvalid = true
+          this.wrongCredentials = true
+        })
       }
     } catch (_) {
-      Alert.alert('', 'Failed to load data')
+      this.showAlert.fire('Filed to load data')
     }
 
-    setBusy(false)
+    runInAction(() => {
+      this.isBusy = false
+    })
   }
 
-  return { email, password, cantSubmit, wrongCredentials, onSubmitPress: () => submitRef.current?.() }
+  onSubmitPress() {
+    this.submit()
+  }
 }
 
 export const LoginScreen = () => {
-  const { email, password, cantSubmit, wrongCredentials, onSubmitPress } = useLoginHook()
+  const userContext = useContext(UserContext)
+  const setBusy = useSetBusy('login')
+  const [control] = useState(() => new LoginControl(userContext))
+  const cantSubmit = useObservable(() => control.cantSubmit)
+  const wrongCredentials = useObservable(() => control.wrongCredentials)
+  useEvent(control.dismissKeyboard, () => Keyboard.dismiss())
+  useEvent(control.showAlert, message => Alert.alert('', message))
+  useEffect(() => autorun(() => setBusy(control.isBusy)), [])
+  useEnabled(control.enabled)
 
   return (
     <View style={{ backgroundColor: 'white', flex: 1 }}>
       <ScrollView keyboardShouldPersistTaps='handled' style={{ flex: 1 }}>
         <ManagedTextInput
-          hook={email}
+          control={control.emailControl}
           placeholder='E-mail (try q@q.qq or w@w.ww)'
           returnKeyType='next'
           keyboardType='email-address'
           autoCapitalize='none'
           style={{ margin: 8 }}
         />
-        <ManagedTextInput hook={password} placeholder='Password' secureTextEntry={true} returnKeyType='go' style={{ margin: 8 }} />
-        <AppButton title='Log in' disabled={cantSubmit} onPress={onSubmitPress} style={{ margin: 8 }} />
+        <ManagedTextInput
+          control={control.passwordControl}
+          placeholder='Password'
+          secureTextEntry={true}
+          returnKeyType='go'
+          style={{ margin: 8 }}
+        />
+        <AppButton title='Log in' disabled={cantSubmit} onPress={() => control.onSubmitPress()} style={{ margin: 8 }} />
         {wrongCredentials && <Text style={{ margin: 8, color: 'red', textAlign: 'center' }}>Wrong email or password</Text>}
       </ScrollView>
     </View>

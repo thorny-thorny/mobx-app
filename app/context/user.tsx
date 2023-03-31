@@ -1,7 +1,7 @@
 import { loginApi } from '@app/api'
 import { createContext, PropsWithChildren, useCallback, useState } from 'react'
 
-type UserContextValue = {
+export type UserContextValue = {
   loggedIn: boolean
   logIn: (email: string, password: string) => Promise<boolean>
   logOut: () => void
