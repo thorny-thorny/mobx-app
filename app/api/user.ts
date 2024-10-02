@@ -10,3 +10,13 @@ export const loginApi = async (email: string, password: string) => {
     return false
   }
 }
+
+export const getPlayersApi = async () => {
+  await waitSeconds(3)
+  return 6
+}
+
+export const getSportTypeApi = async () => {
+  await waitSeconds(1)
+  return 'ballfoot'
+}

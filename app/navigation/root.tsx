@@ -2,16 +2,21 @@ import { BusyOverlay } from '@app/components'
 import { useBusy } from '@app/utils'
 import { OnboardingNavigator } from './onboarding'
 import { useContext } from 'react'
-import { UserContext } from '@app/context'
+import { RootContext } from '@app/context'
 import { UserNavigator } from './user'
+import { observer } from 'mobx-react-lite'
 
-export const RootNavigator = () => {
-  const { loggedIn } = useContext(UserContext)
+export const RootNavigator = observer(() => {
+  const {
+    rootStore: { userStore },
+  } = useContext(RootContext)
   const isBusy = useBusy()
   return (
     <>
-      {loggedIn ? <UserNavigator /> : <OnboardingNavigator />}
+      {userStore === undefined && null}
+      {userStore === null && <OnboardingNavigator />}
+      {userStore !== undefined && userStore !== null && <UserNavigator userStore={userStore} />}
       {isBusy && <BusyOverlay />}
     </>
   )
-}
+})

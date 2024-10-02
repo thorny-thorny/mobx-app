@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useEffect, useState } from 'react'
 import { Alert, Keyboard, ScrollView, Text, View } from 'react-native'
 import { AppButton, ManagedTextInput, TextInputControl } from '@app/components'
 import {
@@ -12,8 +12,9 @@ import {
   useSetBusy,
   watchEvent,
 } from '@app/utils'
-import { UserContext, UserContextValue } from '@app/context'
+import { RootContext } from '@app/context'
 import { autorun, makeAutoObservable, reaction, runInAction } from 'mobx'
+import { RootStore } from '@app/stores'
 
 class LoginControl {
   emailControl: TextInputControl
@@ -24,7 +25,7 @@ class LoginControl {
   wrongCredentials = false
   enabled: MobxEnabled
 
-  constructor(private readonly userContext: UserContextValue) {
+  constructor(private readonly rootStore: RootStore) {
     this.emailControl = new TextInputControl({ testValid: isValidEmail })
     this.passwordControl = new TextInputControl({})
 
@@ -66,7 +67,7 @@ class LoginControl {
     this.isBusy = true
 
     try {
-      const credentialsAreCorrect = await this.userContext.logIn(this.emailControl.value, this.passwordControl.value)
+      const credentialsAreCorrect = await this.rootStore.logIn(this.emailControl.value, this.passwordControl.value)
       if (!credentialsAreCorrect) {
         runInAction(() => {
           this.emailControl.forcedInvalid = true
@@ -89,9 +90,9 @@ class LoginControl {
 }
 
 export const LoginScreen = () => {
-  const userContext = useContext(UserContext)
+  const { rootStore } = useContext(RootContext)
   const setBusy = useSetBusy('login')
-  const [control] = useState(() => new LoginControl(userContext))
+  const [control] = useState(() => new LoginControl(rootStore))
   const cantSubmit = useObservable(() => control.cantSubmit)
   const wrongCredentials = useObservable(() => control.wrongCredentials)
   useEvent(control.dismissKeyboard, () => Keyboard.dismiss())
